@@ -89,7 +89,7 @@ export const forgotPassword = async (req, res) => {
     const token = crypto.randomBytes(32).toString('hex')
     user.resetPasswordToken   = crypto.createHash('sha256').update(token).digest('hex')
     user.resetPasswordExpires = Date.now() + 60 * 60 * 1000 // 1 hour
-    await user.save({ validateBeforeSave: false })
+    await user.save({ validateModifiedOnly: true })
 
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${token}`
     await sendPasswordResetEmail({ to: user.email, fullName: user.fullName, resetUrl })
@@ -120,7 +120,7 @@ export const resetPassword = async (req, res) => {
     user.password             = password
     user.resetPasswordToken   = undefined
     user.resetPasswordExpires = undefined
-    await user.save()
+    await user.save({ validateModifiedOnly: true })
 
     res.json({ message: 'Password reset successfully. Please login.' })
   } catch (err) {
@@ -147,10 +147,10 @@ export const updateProfile = async (req, res) => {
       user.profilePic = uploaded.secure_url
     }
 
-    if (bio    !== undefined) user.bio      = bio
+    if (bio      !== undefined) user.bio      = bio
     if (fullName !== undefined) user.fullName = fullName
 
-    await user.save()
+    await user.save({ validateModifiedOnly: true })
     res.json(user.toSafeObject())
   } catch (err) {
     console.error('Update profile error:', err)

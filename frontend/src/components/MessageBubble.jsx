@@ -79,6 +79,28 @@ export default function MessageBubble({ message, isMine, senderName, senderPic, 
             />
           )}
 
+          {/* Audio message */}
+          {message.audio && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '0.5rem',
+              background: isMine ? 'rgba(124,58,237,0.25)' : 'rgba(35,35,55,0.9)',
+              border: `1px solid ${isMine ? 'rgba(124,58,237,0.35)' : 'rgba(255,255,255,0.07)'}`,
+              borderRadius: '0.75rem', padding: '0.5rem 0.75rem', marginBottom: 3,
+              minWidth: 200, maxWidth: 260,
+            }}>
+              <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>🎤</span>
+              <audio
+                src={message.audio}
+                controls
+                style={{
+                  flex: 1, height: 28,
+                  accentColor: '#9333ea',
+                  filter: 'invert(0)',
+                }}
+              />
+            </div>
+          )}
+
           {/* Text */}
           {message.text && (
             <div className={isMine ? 'msg-out' : 'msg-in'}>

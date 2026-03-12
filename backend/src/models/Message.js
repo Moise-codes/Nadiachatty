@@ -10,6 +10,7 @@ const messageSchema = new mongoose.Schema({
   receiverId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   text:       { type: String, default: '' },
   image:      { type: String, default: '' },
+  audio:      { type: String, default: '' },
   reactions:  { type: [reactionSchema], default: [] },
   replyTo:    { type: mongoose.Schema.Types.ObjectId, ref: 'Message', default: null },
   isRead:     { type: Boolean, default: false },

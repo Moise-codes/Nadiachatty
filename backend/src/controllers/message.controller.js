@@ -45,25 +45,35 @@ export const getMessages = async (req, res) => {
 // ── SEND MESSAGE ────────────────────────────────────────────────
 export const sendMessage = async (req, res) => {
   try {
-    const { text, image, replyTo } = req.body
+    const { text, image, audio, replyTo } = req.body
     const { userId: receiverId } = req.params
     const senderId = req.user._id
 
-    if (!text && !image) return res.status(400).json({ message: 'Message cannot be empty' })
+    if (!text && !image && !audio) return res.status(400).json({ message: 'Message cannot be empty' })
 
     let imageUrl = ''
     if (image) {
       const uploaded = await cloudinary.uploader.upload(image, {
         folder: 'nadiachatty/messages',
-        transformation: [{ width:800, quality:'auto' }]
+        transformation: [{ width: 800, quality: 'auto' }]
       })
       imageUrl = uploaded.secure_url
+    }
+
+    let audioUrl = ''
+    if (audio) {
+      const uploaded = await cloudinary.uploader.upload(audio, {
+        folder: 'nadiachatty/audio',
+        resource_type: 'video'
+      })
+      audioUrl = uploaded.secure_url
     }
 
     const message = await Message.create({
       senderId, receiverId,
       text: text || '',
       image: imageUrl,
+      audio: audioUrl,
       replyTo: replyTo || null
     })
 

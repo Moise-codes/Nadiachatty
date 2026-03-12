@@ -11,25 +11,50 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
   const [status,   setStatus]   = useState(isReceiver ? 'connecting' : 'calling')
   const [duration, setDuration] = useState(0)
 
-  const localVideoRef      = useRef(null)
-  const remoteVideoRef     = useRef(null)
-  const pcRef              = useRef(null)
-  const streamRef          = useRef(null)
-  const timerRef           = useRef(null)
-  const remoteStreamRef    = useRef(new MediaStream())
-  const receiverSocketRef  = useRef(null)   // ← stores receiver's socketId for ICE
+  const localVideoRef     = useRef(null)
+  const remoteVideoRef    = useRef(null)
+  const pcRef             = useRef(null)
+  const streamRef         = useRef(null)
+  const timerRef          = useRef(null)
+  const remoteStreamRef   = useRef(null)       // FIX 3: start as null, reset each call
+  const receiverSocketRef = useRef(null)
+  const iceCandidateQueue = useRef([])         // FIX 4: queue ICE candidates
 
   const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`
 
   useEffect(() => {
     initCall()
-    return cleanup
+    // FIX 5: always notify other side on unmount
+    return () => {
+      const socket = getSocket()
+      const target = isReceiver ? callerSocketId : receiverSocketRef.current
+      if (socket && target) {
+        socket.emit('endCall', { targetSocketId: target })
+      }
+      cleanup()
+    }
   }, [])
 
   const cleanup = () => {
     clearInterval(timerRef.current)
-    streamRef.current?.getTracks().forEach(t => t.stop())
-    pcRef.current?.close()
+    timerRef.current = null
+
+    // FIX 2: stop all tracks and null the ref
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+    }
+
+    // FIX 2: fully tear down peer connection and null the ref
+    if (pcRef.current) {
+      pcRef.current.ontrack              = null
+      pcRef.current.onicecandidate       = null
+      pcRef.current.onconnectionstatechange = null
+      pcRef.current.close()
+      pcRef.current = null
+    }
+
+    // FIX 1: remove ALL socket listeners so they don't stack on next call
     const socket = getSocket()
     if (socket) {
       socket.off('callAnswered')
@@ -37,6 +62,9 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
       socket.off('callEnded')
       socket.off('callRejected')
     }
+
+    // FIX 4: clear ICE queue
+    iceCandidateQueue.current = []
   }
 
   const startTimer = () => {
@@ -45,9 +73,30 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
     timerRef.current = setInterval(() => setDuration(d => d + 1), 1000)
   }
 
+  // FIX 4: flush queued ICE candidates after remote description is set
+  const flushICEQueue = async (pc) => {
+    for (const candidate of iceCandidateQueue.current) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate))
+      } catch (e) {
+        console.warn('Queued ICE error:', e.message)
+      }
+    }
+    iceCandidateQueue.current = []
+  }
+
   const initCall = async () => {
     const socket = getSocket()
     if (!socket) return
+
+    // FIX 1: remove any stale listeners before attaching new ones
+    socket.off('callAnswered')
+    socket.off('iceCandidate')
+    socket.off('callEnded')
+    socket.off('callRejected')
+
+    // FIX 3: always start with a fresh MediaStream each call
+    remoteStreamRef.current = new MediaStream()
 
     try {
       // ── Get local media with fallback ─────────────────────────
@@ -61,7 +110,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
       } catch (e) {
         console.warn('Media access denied:', e.name, e.message)
         if (e.name === 'NotReadableError' || e.name === 'AbortError') {
-          // Device in use — try audio only as fallback
           try {
             stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
           } catch {
@@ -74,7 +122,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
 
       streamRef.current = stream
 
-      // Show local video immediately
       if (localVideoRef.current && type === 'video') {
         localVideoRef.current.srcObject = stream
         localVideoRef.current.play().catch(() => {})
@@ -91,7 +138,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
       })
       pcRef.current = pc
 
-      // Add local tracks
       stream.getTracks().forEach(track => pc.addTrack(track, stream))
 
       // ── Remote tracks ─────────────────────────────────────────
@@ -106,12 +152,12 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
         startTimer()
       }
 
-      // ── ICE candidates — use receiverSocketRef for caller ─────
+      // ── ICE candidates ────────────────────────────────────────
       pc.onicecandidate = (event) => {
         if (event.candidate) {
           const target = isReceiver
             ? callerSocketId
-            : receiverSocketRef.current   // ← set after callAnswered
+            : receiverSocketRef.current
           if (target) {
             socket.emit('iceCandidate', { targetSocketId: target, candidate: event.candidate })
           }
@@ -143,15 +189,19 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
           callerPic:  authUser?.profilePic || ''
         })
 
-        // Receiver answered — save their socketId for ICE
         socket.on('callAnswered', async ({ answer, receiverSocketId }) => {
-          receiverSocketRef.current = receiverSocketId  // ← critical fix
-          if (pc.signalingState !== 'stable') {
-            await pc.setRemoteDescription(new RTCSessionDescription(answer))
+          receiverSocketRef.current = receiverSocketId
+          try {
+            if (pc.signalingState !== 'stable') {
+              await pc.setRemoteDescription(new RTCSessionDescription(answer))
+              await flushICEQueue(pc)  // FIX 4: apply any queued candidates
+            }
+          } catch (e) {
+            console.error('setRemoteDescription error:', e.message)
           }
         })
 
-        // 40s timeout if no answer
+        // 40s timeout
         setTimeout(() => {
           if (pcRef.current?.connectionState !== 'connected') {
             setStatus('ended')
@@ -162,25 +212,34 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
 
       // ── RECEIVER side ─────────────────────────────────────────
       if (isReceiver && offer) {
-        await pc.setRemoteDescription(new RTCSessionDescription(offer))
-        const answerSDP = await pc.createAnswer()
-        await pc.setLocalDescription(answerSDP)
-        socket.emit('answerCall', {
-          callerSocketId,
-          answer: answerSDP
-          // backend will attach receiverSocketId automatically
-        })
-        startTimer()
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(offer))
+          await flushICEQueue(pc)  // FIX 4: apply any queued candidates
+          const answerSDP = await pc.createAnswer()
+          await pc.setLocalDescription(answerSDP)
+          socket.emit('answerCall', { callerSocketId, answer: answerSDP })
+          startTimer()
+        } catch (e) {
+          console.error('Receiver setup error:', e.message)
+        }
       }
 
       // ── Shared listeners ──────────────────────────────────────
+
+      // FIX 4: queue if remote description not ready yet
       socket.on('iceCandidate', async ({ candidate }) => {
-        if (candidate && pc.remoteDescription) {
+        if (!candidate) return
+        const pc = pcRef.current
+        if (!pc) return
+        if (pc.remoteDescription) {
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate))
           } catch (e) {
-            console.warn('ICE candidate error:', e.message)
+            console.warn('ICE error:', e.message)
           }
+        } else {
+          console.log('Queuing ICE candidate — remote description not ready yet')
+          iceCandidateQueue.current.push(candidate)
         }
       })
 
@@ -223,7 +282,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
   if (type === 'video') return (
     <div className="call-overlay" style={{ background: '#000' }}>
 
-      {/* Remote full screen */}
       <video
         ref={remoteVideoRef}
         autoPlay playsInline
@@ -234,7 +292,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
         }}
       />
 
-      {/* Placeholder while not connected */}
       {status !== 'connected' && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 5,
@@ -244,7 +301,8 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
         }}>
           <div style={{
             width: 100, height: 100, borderRadius: '50%', overflow: 'hidden',
-            background: '#7c3aed', border: '3px solid rgba(124,58,237,0.5)', marginBottom: '1rem'
+            background: '#7c3aed', border: '3px solid rgba(124,58,237,0.5)',
+            marginBottom: '1rem'
           }}>
             <img src={getAvatarUrl(user?.fullName, user?.profilePic)} alt=""
               style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -263,7 +321,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
         </div>
       )}
 
-      {/* Local video PiP */}
       <video
         ref={localVideoRef}
         autoPlay playsInline muted
@@ -276,7 +333,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
         }}
       />
 
-      {/* Top bar */}
       <div style={{
         position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
         padding: '20px 24px',
@@ -291,7 +347,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
         </p>
       </div>
 
-      {/* Bottom controls */}
       <div style={{
         position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10,
         padding: '20px 24px 32px',
@@ -316,7 +371,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
     <div className="call-overlay">
       <div className="call-card">
 
-        {/* Pulsing avatar */}
         <div style={{ position: 'relative', marginBottom: '1.5rem' }}>
           {(status === 'calling' || status === 'connecting') && [1.4, 1.8, 2.2].map((scale, i) => (
             <div key={i} style={{
@@ -361,7 +415,6 @@ export default function CallOverlay({ type, user, offer, callerSocketId, isRecei
           </button>
         </div>
 
-        {/* Hidden audio/video elements */}
         <video ref={localVideoRef}  autoPlay playsInline muted style={{ display: 'none' }} />
         <video ref={remoteVideoRef} autoPlay playsInline       style={{ display: 'none' }} />
       </div>

@@ -1,37 +1,31 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useAuthStore } from '../store/useAuthStore'
 import { useChatStore } from '../store/useChatStore'
-import { initSocket, getSocket, disconnectSocket } from '../lib/socket'
+import { getSocket } from '../lib/socket'
 
 export const useSocket = () => {
   const { authUser } = useAuthStore()
   const { subscribeToMessages, unsubscribeFromMessages } = useChatStore()
 
-  const socketInitialized = useRef(false)
-
   useEffect(() => {
     if (!authUser?._id) return
 
-    // Prevent double-init if effect runs twice (React StrictMode)
-    if (socketInitialized.current) return
-    socketInitialized.current = true
+    // Socket already created by useAuthStore — just get it
+    const socket = getSocket()
+    if (!socket) return
 
-    // Init socket connection with userId as query param
-    const socket = initSocket(authUser._id)
-
-    // Listen for online users list from server
+    // Always remove before adding — prevents stacking on re-renders
+    socket.off('getOnlineUsers')
     socket.on('getOnlineUsers', (userIds) => {
       useAuthStore.setState({ onlineUsers: userIds })
     })
 
-    // Subscribe to incoming messages for active chat
     subscribeToMessages()
 
     return () => {
       socket.off('getOnlineUsers')
       unsubscribeFromMessages()
-      disconnectSocket()
-      socketInitialized.current = false
+      // DO NOT call disconnectSocket() here — useAuthStore owns the socket lifecycle
     }
   }, [authUser?._id])
 }

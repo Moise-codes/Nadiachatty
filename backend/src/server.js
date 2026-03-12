@@ -11,6 +11,7 @@ import connectDB from './config/db.js'
 import { initSocket } from './socket/socket.js'
 import authRoutes from './routes/auth.routes.js'
 import messageRoutes from './routes/message.routes.js'
+import reportRoutes from './routes/report.routes.js'
 
 const app    = express()
 const server = http.createServer(app)
@@ -36,7 +37,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 // ── Rate Limiting ────────────────────────────────────────────────
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,  // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 20,
   message: { message: 'Too many attempts, please try again later' },
   standardHeaders: true,
@@ -49,6 +50,7 @@ app.use('/api/auth/forgot-password', authLimiter)
 // ── Routes ───────────────────────────────────────────────────────
 app.use('/api/auth',     authRoutes)
 app.use('/api/messages', messageRoutes)
+app.use('/api/reports',  reportRoutes)
 
 // ── Health Check ─────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

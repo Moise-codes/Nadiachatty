@@ -10,7 +10,7 @@ export const useChatStore = create((set, get) => ({
   isUsersLoading: false,
   isMessagesLoading: false,
   isSendingMessage: false,
-  typingUsers: {},   // { userId: true/false }
+  typingUsers: {},
 
   getUsers: async () => {
     set({ isUsersLoading: true })
@@ -39,6 +39,9 @@ export const useChatStore = create((set, get) => ({
   sendMessage: async (messageData) => {
     const { selectedUser, messages } = get()
     if (!selectedUser) return
+    if (!messageData.text?.trim() && !messageData.image && !messageData.audio) {
+      return toast.error('Message cannot be empty')
+    }
     set({ isSendingMessage: true })
     try {
       const { data } = await axiosInstance.post(`/messages/send/${selectedUser._id}`, messageData)
@@ -79,7 +82,6 @@ export const useChatStore = create((set, get) => ({
       if (msg.senderId === selectedUser?._id || msg.receiverId === selectedUser?._id) {
         set({ messages: [...get().messages, msg] })
       }
-      // Update users list order
       set(state => ({
         users: state.users.map(u =>
           u._id === msg.senderId || u._id === msg.receiverId
