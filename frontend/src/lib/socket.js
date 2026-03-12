@@ -19,7 +19,7 @@ export const initSocket = (userId) => {
 
   currentUserId = userId
 
-  socket = io('/', {
+  socket = io(import.meta.env.VITE_API_URL || '/', {
     withCredentials: true,
     transports: ['websocket', 'polling'],
     query: { userId },
