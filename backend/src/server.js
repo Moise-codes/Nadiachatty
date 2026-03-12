@@ -15,6 +15,7 @@ import reportRoutes from './routes/report.routes.js'
 
 const app    = express()
 const server = http.createServer(app)
+app.set('trust proxy', 1) 
 
 // ── Init Socket.io ───────────────────────────────────────────────
 initSocket(server)
